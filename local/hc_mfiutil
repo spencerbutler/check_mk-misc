@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# check PERC health with mfiutil on FreeBSD
+# Spencer Butler <spencerb honeycomb.net>
+#
+# README
+# this local check creates an item for each battery, disk and volume it finds
+# only works on FreeBSD
+
+declare -A warn
+declare -A warn_full
+check_battery=$(sudo mfiutil show battery) 
+  battery_full=$(echo -e "$check_battery" | awk '/(Manufact|Model|Capacity|Cycles|Charge|Voltage|Temp|[lL]earn)/ {print $0}' | xargs)
+  battery_state=$(echo -e "$check_battery" | awk -F':' '/State of Health/ {print $2}')
+  battery_status=$(echo -e "$check_battery" | awk -F':' '/Status/ {print $2}' | sed 's/ //')
+
+if [[ ! $battery_state =~ (good) ]]; then
+  warn[battery_state]=$battery_state
+  warn_full[battery_state]="STATE: \"$battery_state\" $battery_full"
+  unset battery_state
+elif [[ ! $battery_status =~ (normal) ]]; then
+  warn[battery_status]=$battery_status
+  warn_full[battery_status]="STATE: \"$battery_status\" $battery_full"
+  unset battery_status
+fi
+
+check_drives=$(sudo mfiutil show drives)
+  drive=($(echo -e "$check_drives" | awk '/^ [0-9] \(/ {print $1}' | sed 's/)//'))
+
+declare -A disk_state
+declare -A disk_state_full
+for d in ${drive[@]}; do
+  disk="mfi$d"
+  state=$(echo "$check_drives" | grep "^ $d " | awk '{print $4}')
+  state_full=$(echo "$check_drives" | grep "^ $d " | awk '{print $1,$3,$4}' | sed 's/)//')
+  disk_state[$disk]=$state
+  disk_state_full[$disk]=$state_full
+  if [[ ${disk_state[$disk]} != ONLINE ]]; then
+    warn[$disk]=${disk_state[$disk]}
+    warn_full[$disk]=${disk_state_full[$disk]}
+    unset disk_state[$disk]
+  fi
+done
+
+check_volumes=$(sudo mfiutil show volumes)
+  volume=($(echo -e "$check_volumes" | awk '/^ mfid[0-9] \(/ {print $1}' | sed 's/)//'))
+
+declare -A volume_state
+declare -A volume_state_full
+for v in ${volume[@]}; do
+  volume="$v"
+  state=$(echo "$check_volumes" | grep "^ $v " | awk '{print $6}')
+  state_full=$(echo "$check_volumes" | grep "^ $v " | awk '{print $1,$3,$4,$6,$8}' | sed 's/)//')
+  volume_state[$volume]=$state
+  volume_state_full[$volume]=$state_full
+  if [[ ${volume_state[$volume]} != OPTIMAL ]]; then
+    warn[$volume]=${volume_state[$volume]}
+    warn_full[$volume]=${volume_state_full[$volume]}
+    unset volume_state[$volume]
+  fi
+done
+
+if [[ ${#warn[@]} != 0 ]]; then
+  for alert in ${!warn[@]}; do
+    echo "1 Dell_PERC_$alert - $alert is ${warn_full[$alert]}"
+  done
+fi
+
+if [[ ! -z $battery_state ]]; then
+  echo "0 Dell_PERC_battery_state - Battery State is ${battery_state}"
+fi
+
+if [[ ! -z $battery_status ]]; then
+  echo "0 Dell_PERC_battery_status - Battery Status is ${battery_status}"
+fi
+
+if [[ ${#disk_state[@]} != 0 ]]; then
+  for disk in ${!disk_state[@]}; do
+    echo "0 Dell_PERC_$disk - Disk ${disk_state_full[$disk]}"
+  done
+fi
+
+if [[ ${#volume_state[@]} != 0 ]]; then
+  for volume in ${!volume_state[@]}; do
+    echo "0 Dell_PERC_$volume - Volume ${volume_state_full[$volume]}"
+  done
+fi
+

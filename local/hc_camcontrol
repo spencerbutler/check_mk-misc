@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Monitor the FreeBSD arrays
+# <spencerb honeycomb.net>
+
+report () {
+echo "$STATE HP_smartarray_$x - $EXIT $STATUS"
+}
+
+CAMCONTROL="$(which camcontrol)"
+if [ "$?" -ne 0 ] ; then
+        STATE=3
+        EXIT='UNKNOWN '
+        STATUS='Can not find camcontrol, check your path.'
+        report
+        exit 1
+fi
+
+DEV="$(sudo $CAMCONTROL devlist | grep -Ev '(<.*(CD|DVD).*>|cd[0-9])' | cut -d',' -f2 | sed -e 's/).*$//')"
+
+for x in $DEV; do
+        OUT="$(sudo $CAMCONTROL inquiry $x | grep -o '<.*>')"
+
+    if [[ "$OUT" =~ 'OK' ]]; then
+            STATE=0
+            EXIT='OK '
+            STATUS="$OUT"
+            report
+    else
+            STATE=1
+            EXIT='CRIT '
+            STATUS="$OUT"
+            report
+    fi
+done
+
